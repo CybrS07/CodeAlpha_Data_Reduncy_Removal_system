@@ -15,57 +15,30 @@ export default function App() {
   const handleSignUp = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setSystemLog({ status: 'checking', message: 'Validation mechanism running: Checking for data redundancy...' });
-    
+    setSystemLog({ status: 'checking', message: 'Invoking database RPC verification mechanism...' });
+
     try {
-      // 1. Validation Mechanism: Scan cloud database against all unique constraint identifiers
-      const { data: existingUsers, error: fetchError } = await supabase
-        .from('accounts')
-        .select('username, email, phone')
-        .or(`username.eq.${formData.username},email.eq.${formData.email},phone.eq.${formData.phone}`);
-
-      if (fetchError) throw fetchError;
-
-      // 2. Identification & Classification System
-      if (existingUsers && existingUsers.length > 0) {
-        const match = existingUsers[0];
-        let redundantField = '';
-
-        if (match.username.toLowerCase() === formData.username.toLowerCase()) redundantField = 'Username';
-        else if (match.email.toLowerCase() === formData.email.toLowerCase()) redundantField = 'Email';
-        else if (match.phone === formData.phone) redundantField = 'Phone';
-
-        // Result: Classification = REDUNDANT DATA (Duplicate entry detected)
-        setSystemLog({ 
-          status: 'redundant', 
-          message: `Classification: REDUNDANT DATA. Duplicate entry detected on field [${redundantField}]. Execution halted.` 
-        });
-        alert(`Redundancy Alert: The ${redundantField} is already registered. Please use a unique value.`);
-        setLoading(false);
-        return; 
-      }
-
-      // Result: Classification = FALSE POSITIVE (Data is confirmed unique and safe to write)
-      setSystemLog({ 
-        status: 'verified', 
-        message: 'Classification: FALSE POSITIVE. No data redundancy detected. Safe to append.' 
+      // Execute the remote procedure call (RPC) on the cloud server
+      const { data, error } = await supabase.rpc('manage_account_provisioning', {
+        p_username: formData.username,
+        p_email: formData.email,
+        p_phone: formData.phone,
+        p_password: formData.password
       });
 
-      // 3. Data Insertion: Append only unique, verified entries
-      const { data, error: insertError } = await supabase
-        .from('accounts')
-        .insert([formData])
-        .select()
-        .single();
+      if (error) throw error;
 
-      if (insertError) throw insertError;
-
-      setSystemLog({ status: 'success', message: 'Database accuracy maintained. Entry appended successfully.' });
-      alert('Account registered successfully!');
-      setUser(data);
+      if (data.status === 'redundant') {
+        setSystemLog({ status: 'redundant', message: data.message });
+        alert(`Redundancy Alert: The ${data.field} already exists inside the database!`);
+      } else if (data.status === 'verified') {
+        setSystemLog({ status: 'success', message: data.message });
+        alert('Account created successfully via RPC!');
+        setUser(data.user);
+      }
     } catch (error) {
-      setSystemLog({ status: 'error', message: `System error: ${error.message}` });
-      alert(`Operation failed: ${error.message}`);
+      setSystemLog({ status: 'error', message: `RPC Execution Failed: ${error.message}` });
+      alert(`Signup failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -74,12 +47,12 @@ export default function App() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setSystemLog({ status: 'checking', message: 'Authenticating user...' });
+    setSystemLog({ status: 'checking', message: 'Querying database for user record matches...' });
 
     try {
       const { data, error } = await supabase
         .from('accounts')
-        .select('*')
+        .select('id, username, email, phone')
         .eq('email', formData.email)
         .eq('password', formData.password)
         .maybeSingle();
@@ -87,16 +60,16 @@ export default function App() {
       if (error) throw error;
 
       if (!data) {
-        setSystemLog({ status: 'error', message: 'Authentication failure: Record not found.' });
-        alert('Invalid email or password configuration.');
+        setSystemLog({ status: 'error', message: 'Authentication mismatch. Access denied.' });
+        alert('Invalid credentials.');
       } else {
-        setSystemLog({ status: 'success', message: 'User authenticated successfully.' });
+        setSystemLog({ status: 'success', message: 'Match confirmed. Session authorized.' });
         alert('Login successful!');
         setUser(data);
       }
     } catch (error) {
       setSystemLog({ status: 'error', message: error.message });
-      alert(error.message);
+      alert(`Login failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -106,8 +79,7 @@ export default function App() {
     switch (systemLog.status) {
       case 'checking': return '#e67e22';
       case 'redundant': return '#e74c3c';
-      case 'verified': return '#2ecc71';
-      case 'success': return '#3498db';
+      case 'success': return '#2ecc71';
       case 'error': return '#c0392b';
       default: return '#7f8c8d';
     }
@@ -116,79 +88,56 @@ export default function App() {
   if (user) {
     return (
       <div style={{ padding: '30px', fontFamily: 'system-ui, sans-serif', textAlign: 'center' }}>
-        <h2>Session Established</h2>
-        <div style={{ background: '#f4f6f7', padding: '15px', borderRadius: '8px', display: 'inline-block', minWidth: '250px' }}>
+        <h2>Session Authenticated</h2>
+        <div style={{ background: '#f4f6f7', padding: '15px', borderRadius: '8px', display: 'inline-block', textAlign: 'left' }}>
           <p><strong>Username:</strong> {user.username}</p>
           <p><strong>Email:</strong> {user.email}</p>
-          <p><strong>Phone:</strong> {user.phone}</p>
         </div>
         <br />
-        <button 
-          onClick={() => { setUser(null); setSystemLog({ status: 'idle', message: 'System ready.' }); }} 
-          style={{ marginTop: '20px', padding: '10px 20px', background: '#e74c3c', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-        >
-          Terminate Session (Logout)
+        <button onClick={() => { setUser(null); setSystemLog({ status: 'idle', message: 'System ready.' }); }} style={{ marginTop: '20px', padding: '10px 20px', background: '#e74c3c', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
+          Logout
         </button>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '20px', maxWidth: '450px', margin: '40px auto', fontFamily: 'system-ui, sans-serif', border: '1px solid #e1e4e6', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-      <h2 style={{ textAlign: 'center', marginTop: '0' }}>{isLogin ? 'Account Access' : 'Account Provisioning'}</h2>
+    <div style={{ padding: '20px', maxWidth: '450px', margin: '40px auto', fontFamily: 'system-ui, sans-serif', border: '1px solid #e1e4e6', borderRadius: '8px' }}>
+      <h2 style={{ textAlign: 'center' }}>{isLogin ? 'Login' : 'Create Account'}</h2>
       
-      {/* Live System Log Output Container */}
-      <div style={{ 
-        background: '#1e272e', 
-        color: '#dcdde1',
-        padding: '12px', 
-        borderRadius: '6px', 
-        marginBottom: '20px', 
-        fontSize: '12px', 
-        borderLeft: `5px solid ${getLogColor()}`,
-        fontFamily: 'monospace',
-        transition: 'border-color 0.3s ease'
-      }}>
+      <div style={{ background: '#1e272e', color: '#dcdde1', padding: '12px', borderRadius: '6px', marginBottom: '20px', fontSize: '12px', borderLeft: `5px solid ${getLogColor()}`, fontFamily: 'monospace' }}>
         <strong style={{ color: getLogColor() }}>[SYSTEM LOG]:</strong> {systemLog.message}
       </div>
 
       <form onSubmit={isLogin ? handleLogin : handleSignUp}>
         {!isLogin && (
           <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', marginBottom: '4px', fontWeight: '5px' }}>Username</label>
-            <input type="text" name="username" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', border: '1px solid #ccc', borderRadius: '4px' }} required />
+            <label style={{ display: 'block', marginBottom: '4px' }}>Username</label>
+            <input type="text" name="username" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }} required />
           </div>
         )}
         <div style={{ marginBottom: '12px' }}>
-          <label style={{ display: 'block', marginBottom: '4px', fontWeight: '5px' }}>Email Address</label>
-          <input type="email" name="email" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', border: '1px solid #ccc', borderRadius: '4px' }} required />
+          <label style={{ display: 'block', marginBottom: '4px' }}>Email</label>
+          <input type="email" name="email" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }} required />
         </div>
         {!isLogin && (
           <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', marginBottom: '4px', fontWeight: '5px' }}>Phone Number</label>
-            <input type="tel" name="phone" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', border: '1px solid #ccc', borderRadius: '4px' }} required />
+            <label style={{ display: 'block', marginBottom: '4px' }}>Phone</label>
+            <input type="text" name="phone" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }} required />
           </div>
         )}
         <div style={{ marginBottom: '20px' }}>
-          <label style={{ display: 'block', marginBottom: '4px', fontWeight: '5px' }}>Password</label>
-          <input type="password" name="password" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', border: '1px solid #ccc', borderRadius: '4px' }} required />
+          <label style={{ display: 'block', marginBottom: '4px' }}>Password</label>
+          <input type="password" name="password" onChange={handleChange} style={{ width: '100%', padding: '10px', boxSizing: 'border-box' }} required />
         </div>
         
-        <button 
-          type="submit" 
-          disabled={loading}
-          style={{ width: '100%', padding: '12px', background: '#2c3e50', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}
-        >
-          {loading ? 'Processing Execution...' : isLogin ? 'Authenticate' : 'Commit Registration'}
+        <button type="submit" disabled={loading} style={{ width: '100%', padding: '12px', background: '#2c3e50', color: '#fff', border: 'none', borderRadius: '4px', cursor: loading ? 'not-allowed' : 'pointer' }}>
+          {loading ? 'Executing Cloud RPC...' : isLogin ? 'Login' : 'Register'}
         </button>
       </form>
 
-      <button 
-        disabled={loading}
-        style={{ marginTop: '12px', width: '100%', padding: '10px', background: 'transparent', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer' }} 
-        onClick={() => { setIsLogin(!isLogin); setSystemLog({ status: 'idle', message: 'System view shifted.' }); }}
-      >
-        Toggle to {isLogin ? 'Registration Form' : 'Access Form'}
+      <button disabled={loading} style={{ marginTop: '12px', width: '100%', padding: '10px', background: 'transparent', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer' }} onClick={() => { setIsLogin(!isLogin); setSystemLog({ status: 'idle', message: 'Form toggled.' }); }}>
+        Switch to {isLogin ? 'Create Account' : 'Login'}
       </button>
     </div>
   );
